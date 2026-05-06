@@ -160,13 +160,14 @@ def import_markers_for_file(file_entry, fps):
         file_entry["media_pool_item"].AddMarker(frame, MARKER_COLOR, name, "", 1, "")
 
         # Add to every TimelineItem that uses this WAV (shows directly on timeline clip).
-        # TimelineItem.AddMarker uses clip-relative frames (0 = clip's in-point),
-        # so subtract GetLeftOffset() to convert from source frame to clip frame.
+        # TimelineItem.AddMarker uses absolute timeline frame numbers.
+        # Formula: GetStart() + (source_frame - GetLeftOffset())
         for ti in file_entry.get("timeline_items", []):
-            clip_frame = frame - ti.GetLeftOffset()
-            if clip_frame < 0:
-                continue  # cue is before the clip's in-point
-            result = ti.AddMarker(clip_frame, MARKER_COLOR, name, "", 1, "")
+            clip_offset = frame - ti.GetLeftOffset()
+            if clip_offset < 0 or clip_offset >= ti.GetDuration():
+                continue  # cue is outside the clip's in/out range
+            timeline_frame = ti.GetStart() + clip_offset
+            result = ti.AddMarker(timeline_frame, MARKER_COLOR, name, "", 1, "")
             if result is not False:
                 count += 1
 
