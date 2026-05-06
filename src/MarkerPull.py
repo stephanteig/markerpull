@@ -54,7 +54,7 @@ def get_timeline_fps(project):
 # ---------------------------------------------------------------------------
 
 def scan_timeline_wav_files(timeline):
-    """Return list of {path, name, media_pool_item}, deduplicated by path."""
+    """Return list of {path, name, media_pool_item, timeline_items}, deduplicated by path."""
     track_count = timeline.GetTrackCount("audio")
     seen = {}
 
@@ -76,7 +76,9 @@ def scan_timeline_wav_files(timeline):
                     "path": path,
                     "name": os.path.basename(path),
                     "media_pool_item": mpi,
+                    "timeline_items": [],
                 }
+            seen[path]["timeline_items"].append(clip)
 
     return list(seen.values())
 
@@ -134,7 +136,7 @@ def read_wav_cues(file_path):
 # ---------------------------------------------------------------------------
 
 def import_markers_for_file(file_entry, fps):
-    """Import cue points as markers on the MediaPoolItem.
+    """Import cue points as markers on both MediaPoolItem and all TimelineItems.
 
     Returns (count, error_string_or_None).
     """
@@ -149,14 +151,19 @@ def import_markers_for_file(file_entry, fps):
     if not cues:
         return 0, None
 
-    mpi = file_entry["media_pool_item"]
     count = 0
     for i, cue in enumerate(cues):
         frame = round((cue["sample_offset"] / cue["sample_rate"]) * fps)
         name = cue["name"] or f"Marker {i + 1}"
-        result = mpi.AddMarker(frame, MARKER_COLOR, name, "", 1, "")
-        if result is not False:
-            count += 1
+
+        # Add to MediaPoolItem (shows in media pool / source viewer)
+        file_entry["media_pool_item"].AddMarker(frame, MARKER_COLOR, name, "", 1, "")
+
+        # Add to every TimelineItem that uses this WAV (shows directly on timeline clip)
+        for ti in file_entry.get("timeline_items", []):
+            result = ti.AddMarker(frame, MARKER_COLOR, name, "", 1, "")
+            if result is not False:
+                count += 1
 
     return count, None
 
