@@ -6,70 +6,86 @@ try:
 except ImportError:
     dvr_script = None
 
+MARKER_COLOR = "Blue"
+
+
+# ---------------------------------------------------------------------------
+# Resolve helpers
+# ---------------------------------------------------------------------------
 
 def get_resolve():
     if dvr_script is None:
-        print("[MarkerPull] ERROR: DaVinciResolveScript not available.")
-        return None
+        return None, "DaVinciResolveScript ikke tilgjengelig."
     resolve = dvr_script.scriptapp("Resolve")
     if not resolve:
-        print("[MarkerPull] ERROR: Could not connect to DaVinci Resolve.")
-        return None
-    return resolve
+        return None, "Kunne ikke koble til DaVinci Resolve."
+    return resolve, None
 
 
-def get_active_timeline(resolve):
-    project_manager = resolve.GetProjectManager()
-    if not project_manager:
-        print("[MarkerPull] ERROR: Could not get ProjectManager.")
-        return None, None
-    project = project_manager.GetCurrentProject()
+def get_active_project_and_timeline(resolve):
+    pm = resolve.GetProjectManager()
+    if not pm:
+        return None, None, "Kunne ikke hente ProjectManager."
+    project = pm.GetCurrentProject()
     if not project:
-        print("[MarkerPull] ERROR: No active project.")
-        return None, None
+        return None, None, "Ingen aktiv prosjekt funnet."
     timeline = project.GetCurrentTimeline()
     if not timeline:
-        print("[MarkerPull] ERROR: No active timeline.")
-        return None, None
-    return project, timeline
+        return project, None, "Ingen aktiv tidslinje funnet."
+    return project, timeline, None
 
+
+def get_timeline_fps(project):
+    raw = project.GetSetting("timelineFrameRate")
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return 24.0
+
+
+# ---------------------------------------------------------------------------
+# WAV scanner
+# ---------------------------------------------------------------------------
 
 def scan_timeline_wav_files(timeline):
-    """Return list of dicts: {path, name, media_pool_item}, deduplicated by path."""
+    """Return list of {path, name, media_pool_item}, deduplicated by path."""
     track_count = timeline.GetTrackCount("audio")
-    seen_paths = {}
+    seen = {}
 
-    for track_index in range(1, track_count + 1):
-        items = timeline.GetItemListInTrack("audio", track_index)
+    for i in range(1, track_count + 1):
+        items = timeline.GetItemListInTrack("audio", i)
         if not items:
             continue
         for clip in items:
-            media_pool_item = clip.GetMediaPoolItem()
-            if not media_pool_item:
+            mpi = clip.GetMediaPoolItem()
+            if not mpi:
                 continue
-            file_path = media_pool_item.GetClipProperty("File Path")
-            if not file_path:
+            path = mpi.GetClipProperty("File Path")
+            if not path:
                 continue
-            ext = os.path.splitext(file_path)[1].lower()
-            if ext != ".wav":
+            if os.path.splitext(path)[1].lower() != ".wav":
                 continue
-            if file_path not in seen_paths:
-                seen_paths[file_path] = {
-                    "path": file_path,
-                    "name": os.path.basename(file_path),
-                    "media_pool_item": media_pool_item,
+            if path not in seen:
+                seen[path] = {
+                    "path": path,
+                    "name": os.path.basename(path),
+                    "media_pool_item": mpi,
                 }
 
-    return list(seen_paths.values())
+    return list(seen.values())
 
+
+# ---------------------------------------------------------------------------
+# WAV cue reader
+# ---------------------------------------------------------------------------
 
 def read_wav_cues(file_path):
     """Read cue points from a WAV file.
 
     Returns:
-        list of {name, sample_offset, sample_rate}  — empty if no cues
-        {"error": "missing_wavinfo"}                 — if wavinfo not installed
-        {"error": "read_failed", "detail": str}      — on unexpected failure
+        list of {name, sample_offset, sample_rate}
+        {"error": "missing_wavinfo"}
+        {"error": "read_failed", "detail": str}
     """
     try:
         from wavinfo import WavInfoReader
@@ -90,7 +106,6 @@ def read_wav_cues(file_path):
     if not cue_chunk or not cue_chunk.cue_points:
         return []
 
-    # Build label map from associated data list if present
     label_map = {}
     adl = getattr(reader, "adl_chunk", None)
     if adl:
@@ -99,10 +114,9 @@ def read_wav_cues(file_path):
 
     cues = []
     for i, point in enumerate(cue_chunk.cue_points):
-        raw_label = label_map.get(point.cue_point_id, "").strip()
-        name = raw_label if raw_label else f"Marker {i + 1}"
+        raw = label_map.get(point.cue_point_id, "").strip()
         cues.append({
-            "name": name,
+            "name": raw if raw else f"Marker {i + 1}",
             "sample_offset": point.sample_offset,
             "sample_rate": sample_rate,
         })
@@ -110,30 +124,242 @@ def read_wav_cues(file_path):
     return cues
 
 
-if __name__ == "__main__":
-    resolve = get_resolve()
+# ---------------------------------------------------------------------------
+# Marker injection
+# ---------------------------------------------------------------------------
+
+def import_markers_for_file(file_entry, fps):
+    """Import cue points as markers on the MediaPoolItem.
+
+    Returns (count, error_string_or_None).
+    """
+    cues = read_wav_cues(file_entry["path"])
+
+    if isinstance(cues, dict):
+        err = cues["error"]
+        if err == "missing_wavinfo":
+            return 0, "missing_wavinfo"
+        return 0, cues.get("detail", "Ukjent feil")
+
+    if not cues:
+        return 0, None
+
+    mpi = file_entry["media_pool_item"]
+    count = 0
+    for i, cue in enumerate(cues):
+        frame = round((cue["sample_offset"] / cue["sample_rate"]) * fps)
+        name = cue["name"] or f"Marker {i + 1}"
+        result = mpi.AddMarker(frame, MARKER_COLOR, name, "", 1, "")
+        if result is not False:
+            count += 1
+
+    return count, None
+
+
+# ---------------------------------------------------------------------------
+# UI
+# ---------------------------------------------------------------------------
+
+def run_ui(resolve, project, timeline):
+    ui = fusion.UIManager  # noqa: F821 — injected by Resolve
+    disp = bmd.UIDispatcher(ui)  # noqa: F821
+
+    fps = get_timeline_fps(project)
+
+    # State: list of {path, name, media_pool_item} parallel to tree rows
+    wav_files = []
+
+    dlg = disp.AddWindow(
+        {
+            "WindowTitle": "MarkerPull",
+            "ID": "MarkerPullWin",
+            "Geometry": [100, 100, 420, 320],
+        },
+        [
+            ui.VGroup({"Spacing": 6, "Weight": 1}, [
+                ui.Label({
+                    "ID": "HeaderLabel",
+                    "Text": "WAV-filer i tidslinjen:",
+                    "Weight": 0,
+                }),
+                ui.Tree({
+                    "ID": "FileList",
+                    "Weight": 1,
+                    "RootIsDecorated": False,
+                    "UniformRowHeights": True,
+                    "SortingEnabled": False,
+                    "AlternatingRowColors": True,
+                }),
+                ui.HGroup({"Spacing": 6, "Weight": 0}, [
+                    ui.Button({
+                        "ID": "RefreshBtn",
+                        "Text": "Oppdater liste",
+                        "Weight": 1,
+                    }),
+                    ui.Button({
+                        "ID": "ImportBtn",
+                        "Text": "Importer markører",
+                        "Weight": 1,
+                    }),
+                ]),
+                ui.Label({
+                    "ID": "StatusLabel",
+                    "Text": "Status: Klar",
+                    "Weight": 0,
+                }),
+            ]),
+        ],
+    )
+
+    itm = dlg.GetItems()
+    tree = itm["FileList"]
+
+    # Single column with checkboxes
+    tree.SetColumnCount(1)
+    tree.SetHeaderLabels(["Fil"])
+    tree.ColumnWidth[0] = 360
+
+    def set_status(msg):
+        itm["StatusLabel"].Text = f"Status: {msg}"
+
+    def populate_tree(files):
+        tree.Clear()
+        for entry in files:
+            row = tree.NewItem()
+            row.Text[0] = entry["name"]
+            row.CheckState[0] = ui.CheckState.Checked
+            tree.AddTopLevelItem(row)
+
+    def refresh():
+        nonlocal wav_files
+        current_timeline = project.GetCurrentTimeline()
+        if not current_timeline:
+            set_status("Ingen aktiv tidslinje funnet.")
+            wav_files = []
+            tree.Clear()
+            return
+        wav_files = scan_timeline_wav_files(current_timeline)
+        if not wav_files:
+            set_status("Ingen WAV-filer funnet i aktiv tidslinje.")
+            tree.Clear()
+        else:
+            populate_tree(wav_files)
+            set_status(f"{len(wav_files)} fil(er) funnet.")
+
+    def on_import(_ev):
+        if not wav_files:
+            set_status("Ingen filer å importere.")
+            return
+
+        checked = []
+        for row_index in range(tree.TopLevelItemCount()):
+            row = tree.TopLevelItem(row_index)
+            if row.CheckState[0] == ui.CheckState.Checked:
+                checked.append(wav_files[row_index])
+
+        if not checked:
+            set_status("Ingen filer er valgt.")
+            return
+
+        total = 0
+        for entry in checked:
+            count, err = import_markers_for_file(entry, fps)
+            if err == "missing_wavinfo":
+                set_status("Mangler wavinfo. Kjør: pip3 install wavinfo")
+                return
+            if err:
+                set_status(f"Feil for {entry['name']}: {err}")
+                return
+            if count == 0:
+                set_status(f"{entry['name']}: ingen markører funnet.")
+            total += count
+
+        if total > 0:
+            set_status(f"Importerte {total} markør(er) fra {len(checked)} fil(er).")
+
+    dlg.On.MarkerPullWin.Close = lambda ev: disp.ExitLoop()
+    dlg.On.RefreshBtn.Clicked = lambda ev: refresh()
+    dlg.On.ImportBtn.Clicked = on_import
+
+    refresh()
+    dlg.Show()
+    disp.RunLoop()
+    dlg.Hide()
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+def main():
+    resolve, err = get_resolve()
     if not resolve:
+        # Try to show a UI error if possible, else print
+        try:
+            ui = fusion.UIManager  # noqa: F821
+            disp = bmd.UIDispatcher(ui)  # noqa: F821
+            err_dlg = disp.AddWindow(
+                {"WindowTitle": "MarkerPull — Feil", "ID": "ErrWin", "Geometry": [100, 100, 360, 100]},
+                [ui.VGroup({}, [
+                    ui.Label({"Text": err or "Ukjent feil", "Alignment": {"AlignCenter": True}}),
+                    ui.Button({"ID": "OkBtn", "Text": "OK", "Weight": 0}),
+                ])],
+            )
+            err_dlg.On.ErrWin.Close = lambda ev: disp.ExitLoop()
+            err_dlg.On.OkBtn.Clicked = lambda ev: disp.ExitLoop()
+            err_dlg.Show()
+            disp.RunLoop()
+            err_dlg.Hide()
+        except Exception:
+            print(f"[MarkerPull] ERROR: {err}")
+        return
+
+    project, timeline, err = get_active_project_and_timeline(resolve)
+    if err:
+        print(f"[MarkerPull] {err}")
+        # Still open the window — refresh button can retry when a timeline is open
+        try:
+            run_ui(resolve, project or resolve.GetProjectManager().GetCurrentProject(), None)
+        except Exception:
+            pass
+        return
+
+    run_ui(resolve, project, timeline)
+
+
+# When run as a Resolve Utility script, fusion/bmd are already in scope.
+# The if-block below is only for CLI debug runs.
+if __name__ == "__main__":
+    resolve, err = get_resolve()
+    if not resolve:
+        print(f"[MarkerPull] ERROR: {err}")
         sys.exit(1)
 
-    project, timeline = get_active_timeline(resolve)
-    if not timeline:
+    project, timeline, err = get_active_project_and_timeline(resolve)
+    if err:
+        print(f"[MarkerPull] {err}")
         sys.exit(1)
 
-    print(f"[MarkerPull] Timeline: {timeline.GetName()}")
+    fps = get_timeline_fps(project)
+    print(f"[MarkerPull] Timeline: {timeline.GetName()}  FPS: {fps}")
 
     wav_files = scan_timeline_wav_files(timeline)
     if not wav_files:
-        print("[MarkerPull] No WAV files found in active timeline.")
+        print("[MarkerPull] Ingen WAV-filer funnet i aktiv tidslinje.")
     else:
-        print(f"[MarkerPull] Found {len(wav_files)} unique WAV file(s):")
+        print(f"[MarkerPull] Fant {len(wav_files)} unike WAV-filer:")
         for entry in wav_files:
             print(f"  - {entry['name']}  ({entry['path']})")
             cues = read_wav_cues(entry["path"])
             if isinstance(cues, dict):
-                print(f"      ERROR: {cues}")
+                print(f"      FEIL: {cues}")
             elif not cues:
-                print("      (no cue points)")
+                print("      (ingen cue points)")
             else:
                 for c in cues:
                     secs = c["sample_offset"] / c["sample_rate"]
-                    print(f"      cue '{c['name']}'  offset={c['sample_offset']} samples  ({secs:.3f}s)")
+                    print(f"      cue '{c['name']}'  offset={c['sample_offset']}  ({secs:.3f}s)")
+
+# Resolve calls top-level code when loading a Utility script — invoke main().
+else:
+    main()
