@@ -1,11 +1,6 @@
 import sys
 import os
 
-try:
-    import DaVinciResolveScript as dvr_script
-except ImportError:
-    dvr_script = None
-
 MARKER_COLOR = "Blue"
 
 
@@ -14,12 +9,23 @@ MARKER_COLOR = "Blue"
 # ---------------------------------------------------------------------------
 
 def get_resolve():
-    if dvr_script is None:
-        return None, "DaVinciResolveScript ikke tilgjengelig."
-    resolve = dvr_script.scriptapp("Resolve")
-    if not resolve:
+    # Inside Resolve: bmd is injected as a global by Fusion
+    try:
+        r = bmd.scriptapp("Resolve")  # noqa: F821
+        if r:
+            return r, None
+    except NameError:
+        pass
+
+    # External / CLI fallback
+    try:
+        import DaVinciResolveScript as dvr_script
+        r = dvr_script.scriptapp("Resolve")
+        if r:
+            return r, None
         return None, "Kunne ikke koble til DaVinci Resolve."
-    return resolve, None
+    except ImportError:
+        return None, "Kunne ikke koble til Resolve (bmd ikke tilgjengelig)."
 
 
 def get_active_project_and_timeline(resolve):
