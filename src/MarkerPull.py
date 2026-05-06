@@ -327,9 +327,18 @@ def main():
     run_ui(resolve, project, timeline)
 
 
-# When run as a Resolve Utility script, fusion/bmd are already in scope.
-# The if-block below is only for CLI debug runs.
-if __name__ == "__main__":
+# Resolve Utility scripts run with __name__ == "__main__" AND inject fusion/bmd
+# as globals. We detect the Resolve context by checking for fusion.
+try:
+    _ = fusion  # noqa: F821
+    _in_resolve = True
+except NameError:
+    _in_resolve = False
+
+if _in_resolve:
+    main()
+else:
+    # CLI debug mode — print timeline WAV files and their cue points
     resolve, err = get_resolve()
     if not resolve:
         print(f"[MarkerPull] ERROR: {err}")
@@ -359,7 +368,3 @@ if __name__ == "__main__":
                 for c in cues:
                     secs = c["sample_offset"] / c["sample_rate"]
                     print(f"      cue '{c['name']}'  offset={c['sample_offset']}  ({secs:.3f}s)")
-
-# Resolve calls top-level code when loading a Utility script — invoke main().
-else:
-    main()
