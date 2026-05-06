@@ -63,6 +63,53 @@ def scan_timeline_wav_files(timeline):
     return list(seen_paths.values())
 
 
+def read_wav_cues(file_path):
+    """Read cue points from a WAV file.
+
+    Returns:
+        list of {name, sample_offset, sample_rate}  — empty if no cues
+        {"error": "missing_wavinfo"}                 — if wavinfo not installed
+        {"error": "read_failed", "detail": str}      — on unexpected failure
+    """
+    try:
+        from wavinfo import WavInfoReader
+    except ImportError:
+        return {"error": "missing_wavinfo"}
+
+    try:
+        reader = WavInfoReader(file_path)
+    except Exception as e:
+        return {"error": "read_failed", "detail": str(e)}
+
+    fmt = reader.fmt_chunk
+    if not fmt:
+        return []
+    sample_rate = fmt.sample_rate
+
+    cue_chunk = reader.cue_chunk
+    if not cue_chunk or not cue_chunk.cue_points:
+        return []
+
+    # Build label map from associated data list if present
+    label_map = {}
+    adl = getattr(reader, "adl_chunk", None)
+    if adl:
+        for entry in getattr(adl, "entries", []):
+            label_map[entry.cue_point_id] = entry.text
+
+    cues = []
+    for i, point in enumerate(cue_chunk.cue_points):
+        raw_label = label_map.get(point.cue_point_id, "").strip()
+        name = raw_label if raw_label else f"Marker {i + 1}"
+        cues.append({
+            "name": name,
+            "sample_offset": point.sample_offset,
+            "sample_rate": sample_rate,
+        })
+
+    return cues
+
+
 if __name__ == "__main__":
     resolve = get_resolve()
     if not resolve:
@@ -81,3 +128,12 @@ if __name__ == "__main__":
         print(f"[MarkerPull] Found {len(wav_files)} unique WAV file(s):")
         for entry in wav_files:
             print(f"  - {entry['name']}  ({entry['path']})")
+            cues = read_wav_cues(entry["path"])
+            if isinstance(cues, dict):
+                print(f"      ERROR: {cues}")
+            elif not cues:
+                print("      (no cue points)")
+            else:
+                for c in cues:
+                    secs = c["sample_offset"] / c["sample_rate"]
+                    print(f"      cue '{c['name']}'  offset={c['sample_offset']} samples  ({secs:.3f}s)")
