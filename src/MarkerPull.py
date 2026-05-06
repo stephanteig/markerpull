@@ -224,20 +224,32 @@ def run_ui(resolve, project):
     tree = itm["FileList"]
 
     # Fusion UIManager Tree API: use ColumnCount property + SetHeaderItem()
-    tree.ColumnCount = 1
+    tree.ColumnCount = 2
     hdr = tree.NewItem()
     hdr.Text[0] = "Fil"
+    hdr.Text[1] = "Markører"
     tree.SetHeaderItem(hdr)
-    tree.ColumnWidth[0] = 380
+    tree.ColumnWidth[0] = 300
+    tree.ColumnWidth[1] = 70
 
     def set_status(msg):
         itm["StatusLabel"].Text = f"Status: {msg}"
+
+    def cue_count_label(file_path):
+        cues = read_wav_cues(file_path)
+        if isinstance(cues, dict):
+            err = cues.get("error", "")
+            if err == "missing_wavinfo":
+                return "?"
+            return "feil"
+        return str(len(cues))
 
     def populate_tree(files):
         tree.Clear()
         for entry in files:
             row = tree.NewItem()
             row.Text[0] = entry["name"]
+            row.Text[1] = cue_count_label(entry["path"])
             row.CheckState[0] = CHECK_CHECKED
             tree.AddTopLevelItem(row)
 
