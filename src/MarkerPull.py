@@ -166,14 +166,17 @@ def import_markers_for_file(file_entry, fps):
 # UI
 # ---------------------------------------------------------------------------
 
-def run_ui(resolve, project, timeline):
+CHECK_CHECKED = 2    # Qt::Checked
+CHECK_UNCHECKED = 0  # Qt::Unchecked
+
+
+def run_ui(resolve, project):
     ui = fusion.UIManager  # noqa: F821 — injected by Resolve
     disp = bmd.UIDispatcher(ui)  # noqa: F821
 
-    fps = get_timeline_fps(project)
+    fps = get_timeline_fps(project) if project else 24.0
 
-    # State: list of {path, name, media_pool_item} parallel to tree rows
-    wav_files = []
+    wav_files = []  # list of {path, name, media_pool_item}, parallel to tree rows
 
     dlg = disp.AddWindow(
         {
@@ -220,10 +223,12 @@ def run_ui(resolve, project, timeline):
     itm = dlg.GetItems()
     tree = itm["FileList"]
 
-    # Single column with checkboxes
-    tree.SetColumnCount(1)
-    tree.SetHeaderLabels(["Fil"])
-    tree.ColumnWidth[0] = 360
+    # Fusion UIManager Tree API: use ColumnCount property + SetHeaderItem()
+    tree.ColumnCount = 1
+    hdr = tree.NewItem()
+    hdr.Text[0] = "Fil"
+    tree.SetHeaderItem(hdr)
+    tree.ColumnWidth[0] = 380
 
     def set_status(msg):
         itm["StatusLabel"].Text = f"Status: {msg}"
@@ -233,17 +238,21 @@ def run_ui(resolve, project, timeline):
         for entry in files:
             row = tree.NewItem()
             row.Text[0] = entry["name"]
-            row.CheckState[0] = ui.CheckState.Checked
+            row.CheckState[0] = CHECK_CHECKED
             tree.AddTopLevelItem(row)
 
     def refresh():
-        nonlocal wav_files
+        nonlocal wav_files, fps
+        if not project:
+            set_status("Ingen aktiv prosjekt funnet.")
+            return
         current_timeline = project.GetCurrentTimeline()
         if not current_timeline:
             set_status("Ingen aktiv tidslinje funnet.")
             wav_files = []
             tree.Clear()
             return
+        fps = get_timeline_fps(project)
         wav_files = scan_timeline_wav_files(current_timeline)
         if not wav_files:
             set_status("Ingen WAV-filer funnet i aktiv tidslinje.")
@@ -258,9 +267,9 @@ def run_ui(resolve, project, timeline):
             return
 
         checked = []
-        for row_index in range(tree.TopLevelItemCount()):
+        for row_index in range(tree.TopLevelItemCount):
             row = tree.TopLevelItem(row_index)
-            if row.CheckState[0] == ui.CheckState.Checked:
+            if row.CheckState[0] == CHECK_CHECKED:
                 checked.append(wav_files[row_index])
 
         if not checked:
@@ -297,40 +306,35 @@ def run_ui(resolve, project, timeline):
 # Entry point
 # ---------------------------------------------------------------------------
 
+def show_error_dialog(message):
+    """Show a modal error dialog using Fusion UIManager."""
+    ui = fusion.UIManager  # noqa: F821
+    disp = bmd.UIDispatcher(ui)  # noqa: F821
+    dlg = disp.AddWindow(
+        {"WindowTitle": "MarkerPull — Feil", "ID": "ErrWin", "Geometry": [100, 100, 400, 110]},
+        [ui.VGroup({"Spacing": 8}, [
+            ui.Label({"Text": message, "Alignment": {"AlignHCenter": True, "AlignVCenter": True}}),
+            ui.Button({"ID": "OkBtn", "Text": "OK", "Weight": 0}),
+        ])],
+    )
+    dlg.On.ErrWin.Close = lambda ev: disp.ExitLoop()
+    dlg.On.OkBtn.Clicked = lambda ev: disp.ExitLoop()
+    dlg.Show()
+    disp.RunLoop()
+    dlg.Hide()
+
+
 def main():
     resolve, err = get_resolve()
     if not resolve:
-        # Try to show a UI error if possible, else print
-        try:
-            ui = fusion.UIManager  # noqa: F821
-            disp = bmd.UIDispatcher(ui)  # noqa: F821
-            err_dlg = disp.AddWindow(
-                {"WindowTitle": "MarkerPull — Feil", "ID": "ErrWin", "Geometry": [100, 100, 360, 100]},
-                [ui.VGroup({}, [
-                    ui.Label({"Text": err or "Ukjent feil", "Alignment": {"AlignCenter": True}}),
-                    ui.Button({"ID": "OkBtn", "Text": "OK", "Weight": 0}),
-                ])],
-            )
-            err_dlg.On.ErrWin.Close = lambda ev: disp.ExitLoop()
-            err_dlg.On.OkBtn.Clicked = lambda ev: disp.ExitLoop()
-            err_dlg.Show()
-            disp.RunLoop()
-            err_dlg.Hide()
-        except Exception:
-            print(f"[MarkerPull] ERROR: {err}")
+        show_error_dialog(err or "Kunne ikke koble til DaVinci Resolve.")
         return
 
     project, timeline, err = get_active_project_and_timeline(resolve)
     if err:
         print(f"[MarkerPull] {err}")
-        # Still open the window — refresh button can retry when a timeline is open
-        try:
-            run_ui(resolve, project or resolve.GetProjectManager().GetCurrentProject(), None)
-        except Exception:
-            pass
-        return
 
-    run_ui(resolve, project, timeline)
+    run_ui(resolve, project)
 
 
 # Resolve Utility scripts run with __name__ == "__main__" AND inject fusion/bmd
@@ -342,7 +346,13 @@ except NameError:
     _in_resolve = False
 
 if _in_resolve:
-    main()
+    try:
+        main()
+    except Exception as e:
+        try:
+            show_error_dialog(f"Uventet feil: {e}")
+        except Exception:
+            print(f"[MarkerPull] FEIL: {e}")
 else:
     # CLI debug mode — print timeline WAV files and their cue points
     resolve, err = get_resolve()
