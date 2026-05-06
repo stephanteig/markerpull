@@ -165,8 +165,6 @@ def import_markers_for_file(file_entry, fps):
 # UI
 # ---------------------------------------------------------------------------
 
-CHECK_CHECKED = 2    # Qt::Checked
-CHECK_UNCHECKED = 0  # Qt::Unchecked
 
 
 def run_ui(resolve, project):
@@ -249,7 +247,6 @@ def run_ui(resolve, project):
             row = tree.NewItem()
             row.Text[0] = entry["name"]
             row.Text[1] = cue_count_label(entry["path"])
-            row.CheckState[0] = CHECK_CHECKED
             tree.AddTopLevelItem(row)
 
     def refresh():
@@ -284,24 +281,9 @@ def run_ui(resolve, project):
             set_status("Ingen filer å importere.")
             return
 
-        # TopLevelItemCount may be property or method depending on Resolve version
-        count_val = tree.TopLevelItemCount
-        row_count = count_val() if callable(count_val) else count_val
-
-        checked = []
-        for row_index in range(row_count):
-            row = tree.TopLevelItem(row_index)
-            if row.CheckState[0] == CHECK_CHECKED:
-                checked.append(wav_files[row_index])
-
-        set_status(f"Fant {len(checked)} avhukede filer av {row_count} rader...")
-
-        if not checked:
-            set_status("Ingen filer er valgt.")
-            return
-
         total = 0
-        for entry in checked:
+        skipped = 0
+        for entry in wav_files:
             count, err = import_markers_for_file(entry, fps)
             if err == "missing_wavinfo":
                 set_status("Mangler wavinfo. Kjør: pip3 install wavinfo")
@@ -310,11 +292,14 @@ def run_ui(resolve, project):
                 set_status(f"Feil for {entry['name']}: {err}")
                 return
             if count == 0:
-                set_status(f"{entry['name']}: ingen markører funnet.")
-            total += count
+                skipped += 1
+            else:
+                total += count
 
         if total > 0:
-            set_status(f"Importerte {total} markør(er) fra {len(checked)} fil(er).")
+            set_status(f"Importerte {total} markør(er). {skipped} fil(er) hadde ingen.")
+        else:
+            set_status("Ingen markører funnet i noen av filene.")
 
     dlg.On.MarkerPullWin.Close = lambda ev: disp.ExitLoop()
     dlg.On.RefreshBtn.Clicked = lambda ev: refresh()
