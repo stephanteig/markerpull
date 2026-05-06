@@ -273,15 +273,28 @@ def run_ui(resolve, project):
             set_status(f"{len(wav_files)} fil(er) funnet.")
 
     def on_import(_ev):
+        try:
+            _do_import()
+        except Exception as e:
+            set_status(f"FEIL: {e}")
+            print(f"[MarkerPull] Import exception: {e}")
+
+    def _do_import():
         if not wav_files:
             set_status("Ingen filer å importere.")
             return
 
+        # TopLevelItemCount may be property or method depending on Resolve version
+        count_val = tree.TopLevelItemCount
+        row_count = count_val() if callable(count_val) else count_val
+
         checked = []
-        for row_index in range(tree.TopLevelItemCount):
+        for row_index in range(row_count):
             row = tree.TopLevelItem(row_index)
             if row.CheckState[0] == CHECK_CHECKED:
                 checked.append(wav_files[row_index])
+
+        set_status(f"Fant {len(checked)} avhukede filer av {row_count} rader...")
 
         if not checked:
             set_status("Ingen filer er valgt.")
