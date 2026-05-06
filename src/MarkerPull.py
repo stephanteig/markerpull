@@ -159,9 +159,14 @@ def import_markers_for_file(file_entry, fps):
         # Add to MediaPoolItem (shows in media pool / source viewer)
         file_entry["media_pool_item"].AddMarker(frame, MARKER_COLOR, name, "", 1, "")
 
-        # Add to every TimelineItem that uses this WAV (shows directly on timeline clip)
+        # Add to every TimelineItem that uses this WAV (shows directly on timeline clip).
+        # TimelineItem.AddMarker uses clip-relative frames (0 = clip's in-point),
+        # so subtract GetLeftOffset() to convert from source frame to clip frame.
         for ti in file_entry.get("timeline_items", []):
-            result = ti.AddMarker(frame, MARKER_COLOR, name, "", 1, "")
+            clip_frame = frame - ti.GetLeftOffset()
+            if clip_frame < 0:
+                continue  # cue is before the clip's in-point
+            result = ti.AddMarker(clip_frame, MARKER_COLOR, name, "", 1, "")
             if result is not False:
                 count += 1
 
