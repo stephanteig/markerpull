@@ -103,24 +103,23 @@ def read_wav_cues(file_path):
     except Exception as e:
         return {"error": "read_failed", "detail": str(e)}
 
-    fmt = reader.fmt_chunk
+    # wavinfo 4.x API: reader.fmt, reader.cues
+    fmt = reader.fmt
     if not fmt:
         return []
     sample_rate = fmt.sample_rate
 
-    cue_chunk = reader.cue_chunk
-    if not cue_chunk or not cue_chunk.cue_points:
+    cues_reader = reader.cues
+    if not cues_reader or not cues_reader.cues:
         return []
 
     label_map = {}
-    adl = getattr(reader, "adl_chunk", None)
-    if adl:
-        for entry in getattr(adl, "entries", []):
-            label_map[entry.cue_point_id] = entry.text
+    for entry in (cues_reader.labels or []):
+        label_map[entry.name] = entry.text
 
     cues = []
-    for i, point in enumerate(cue_chunk.cue_points):
-        raw = label_map.get(point.cue_point_id, "").strip()
+    for i, point in enumerate(cues_reader.cues):
+        raw = label_map.get(point.name, "").strip()
         cues.append({
             "name": raw if raw else f"Marker {i + 1}",
             "sample_offset": point.sample_offset,
