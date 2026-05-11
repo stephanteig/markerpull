@@ -9,11 +9,12 @@ DaVinci Resolve Studio utility script that reads WAV cue points from Røde Caste
 
 ## Install
 
-Copy the script to Resolve's utility scripts folder:
+1. Download `MarkerPull_Setup.lua`
+2. Open DaVinci Resolve and go to the **Fusion** page
+3. Open the scripting console: **Script → Show Console** (or Shift+Cmd+C on macOS)
+4. Drag `MarkerPull_Setup.lua` onto the console window
 
-```bash
-cp src/MarkerPull.py ~/Library/Application\ Support/Blackmagic\ Design/DaVinci\ Resolve/Fusion/Scripts/Utility/MarkerPull.py
-```
+The installer copies MarkerPull to the correct location and attempts to install `wavinfo` automatically. A dialog confirms the result.
 
 Then launch from inside Resolve: **Workspace → Scripts → Utility → MarkerPull**
 
