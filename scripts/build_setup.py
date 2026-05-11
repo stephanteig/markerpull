@@ -82,7 +82,14 @@ local function try_install_wavinfo()
                 return false, py .. " -m pip install wavinfo"
             end
         end
-        return false, "python3.12 -m pip install wavinfo"
+        -- Homebrew / system python3 with PEP-668 override
+        for _, cmd in ipairs({
+            "python3 -m pip install --quiet --break-system-packages wavinfo",
+            "python3 -m pip install --quiet --user wavinfo",
+        }) do
+            if exec_ok(cmd) then return true, nil end
+        end
+        return false, "python3 -m pip install --break-system-packages wavinfo"
     end
 end
 
