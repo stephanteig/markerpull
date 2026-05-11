@@ -41,8 +41,8 @@ def get_active_project_and_timeline(resolve):
     return project, timeline, None
 
 
-def get_timeline_fps(project, timeline=None):
-    # timeline.GetSetting is more reliable than project.GetSetting for frame rate
+def get_timeline_fps(timeline, project=None):
+    """FPS for TimelineItem.AddMarker — prefers timeline.GetSetting."""
     for obj in [timeline, project]:
         if not obj:
             continue
@@ -52,6 +52,19 @@ def get_timeline_fps(project, timeline=None):
                 return v
         except (TypeError, ValueError):
             pass
+    return 25.0
+
+
+def get_mpi_fps(project):
+    """FPS for MediaPoolItem.AddMarker — uses project.GetSetting (not timeline)."""
+    try:
+        v = float(project.GetSetting("timelineFrameRate"))
+        if v > 0:
+            print(f"[MarkerPull] mpi_fps from project.GetSetting={v}")
+            return v
+    except (TypeError, ValueError):
+        pass
+    print(f"[MarkerPull] mpi_fps fallback=25.0")
     return 25.0
 
 
@@ -141,8 +154,11 @@ def read_wav_cues(file_path):
 # Marker injection
 # ---------------------------------------------------------------------------
 
-def import_markers_for_file(file_entry, fps):
+def import_markers_for_file(file_entry, ti_fps, mpi_fps):
     """Import cue points as markers on both MediaPoolItem and all TimelineItems.
+
+    ti_fps  — timeline fps (from timeline.GetSetting), used for TimelineItem frames
+    mpi_fps — project fps  (from project.GetSetting),  used for MediaPoolItem frames
 
     Returns (count, error_string_or_None).
     """
@@ -159,15 +175,17 @@ def import_markers_for_file(file_entry, fps):
 
     count = 0
     for i, cue in enumerate(cues):
-        frame = round((cue["sample_offset"] / cue["sample_rate"]) * fps)
+        time_secs = cue["sample_offset"] / cue["sample_rate"]
         name = cue["name"] or f"Marker {i + 1}"
 
-        # Add to MediaPoolItem (shows in media pool / source viewer)
-        file_entry["media_pool_item"].AddMarker(frame, MARKER_COLOR, name, "", 1, "")
+        # MediaPoolItem uses project fps
+        mpi_frame = round(time_secs * mpi_fps)
+        file_entry["media_pool_item"].AddMarker(mpi_frame, MARKER_COLOR, name, "", 1, "")
 
-        # Add to every TimelineItem — frame is source-relative, GetLeftOffset=0 in this case
+        # TimelineItem uses timeline fps, clip-relative
+        ti_frame_base = round(time_secs * ti_fps)
         for ti in file_entry.get("timeline_items", []):
-            clip_frame = frame - ti.GetLeftOffset()
+            clip_frame = ti_frame_base - ti.GetLeftOffset()
             if clip_frame < 0 or clip_frame >= ti.GetDuration():
                 continue
             result = ti.AddMarker(clip_frame, MARKER_COLOR, name, "", 1, "")
@@ -187,7 +205,8 @@ def run_ui(resolve, project):
     ui = fusion.UIManager  # noqa: F821 — injected by Resolve
     disp = bmd.UIDispatcher(ui)  # noqa: F821
 
-    fps = get_timeline_fps(project) if project else 24.0
+    ti_fps = 25.0
+    mpi_fps = get_mpi_fps(project) if project else 25.0
 
     wav_files = []  # list of {path, name, media_pool_item}, parallel to tree rows
 
@@ -266,7 +285,7 @@ def run_ui(resolve, project):
             tree.AddTopLevelItem(row)
 
     def refresh():
-        nonlocal wav_files, fps
+        nonlocal wav_files, ti_fps
         if not project:
             set_status("Ingen aktiv prosjekt funnet.")
             return
@@ -276,7 +295,7 @@ def run_ui(resolve, project):
             wav_files = []
             tree.Clear()
             return
-        fps = get_timeline_fps(project, current_timeline)
+        ti_fps = get_timeline_fps(current_timeline, project)
         wav_files = scan_timeline_wav_files(current_timeline)
         if not wav_files:
             set_status("Ingen WAV-filer funnet i aktiv tidslinje.")
@@ -300,7 +319,7 @@ def run_ui(resolve, project):
         total = 0
         skipped = 0
         for entry in wav_files:
-            count, err = import_markers_for_file(entry, fps)
+            count, err = import_markers_for_file(entry, ti_fps, mpi_fps)
             if err == "missing_wavinfo":
                 set_status("Mangler wavinfo. Kjør: pip3 install wavinfo")
                 return
