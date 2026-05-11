@@ -130,18 +130,52 @@ local fusion_obj = fu or fusion
 local ui   = fusion_obj.UIManager
 local disp = bmd.UIDispatcher(ui)
 
+local btn_row = {}
+if ok and not wavinfo_ok then
+    table.insert(btn_row, ui:Button({ ID = "CopyBtn", Text = "Kopier kommando", Weight = 1 }))
+end
+if ok then
+    table.insert(btn_row, ui:Button({ ID = "UninstallBtn", Text = "Avinstaller", Weight = 0 }))
+end
+table.insert(btn_row, ui:Button({ ID = "OkBtn", Text = "OK", Weight = 0 }))
+
 local dlg = disp:AddWindow(
-    { WindowTitle = "MarkerPull Setup", ID = "SetupWin", Geometry = {200, 200, 480, 260} },
+    { WindowTitle = "MarkerPull Setup", ID = "SetupWin", Geometry = {200, 200, 520, 300} },
     {
         ui:VGroup({ Spacing = 10, Weight = 1 }, {
             ui:Label({ ID = "Msg", Text = msg, Weight = 1 }),
-            ui:Button({ ID = "OkBtn", Text = "OK", Weight = 0 }),
+            ui:HGroup({ Spacing = 6, Weight = 0 }, btn_row),
         }),
     }
 )
 
+local itm = dlg:GetItems()
+
 function dlg.On.SetupWin.Close(ev) disp:ExitLoop() end
 function dlg.On.OkBtn.Clicked(ev)  disp:ExitLoop() end
+
+if ok and not wavinfo_ok then
+    function dlg.On.CopyBtn.Clicked(ev)
+        if is_windows then
+            os.execute('echo ' .. pip_cmd .. ' | clip')
+        else
+            os.execute("echo '" .. pip_cmd .. "' | pbcopy")
+        end
+        itm["CopyBtn"].Text = "Kopiert!"
+    end
+end
+
+if ok then
+    function dlg.On.UninstallBtn.Clicked(ev)
+        local removed = os.remove(dest)
+        if removed then
+            itm["Msg"].Text = "MarkerPull er avinstallert."
+            itm["UninstallBtn"].Enabled = false
+        else
+            itm["Msg"].Text = "Fjerning feilet. Slett manuelt:\n" .. dest
+        end
+    end
+end
 
 dlg:Show()
 disp:RunLoop()
