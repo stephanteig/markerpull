@@ -14,6 +14,15 @@ local is_windows   = package.config:sub(1,1) == "\\"
 -- ---- Paths ----
 
 local function get_install_dir()
+    -- Ask Fusion where it expects Utility scripts — most reliable across versions and platforms
+    local fusion_obj = fu or fusion
+    if fusion_obj then
+        local mapped = fusion_obj:MapPath("Scripts:Utility")
+        if mapped and mapped ~= "" then
+            return mapped:gsub("[/\\]$", "")
+        end
+    end
+    -- Fallback for safety
     if is_windows then
         local appdata = os.getenv("APPDATA") or ""
         return appdata .. "\\Blackmagic Design\\DaVinci Resolve\\Fusion\\Scripts\\Utility"
