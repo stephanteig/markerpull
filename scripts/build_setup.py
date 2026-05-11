@@ -68,26 +68,38 @@ local function try_install_wavinfo()
         end
         return false, "py -m pip install wavinfo"
     else
-        for _, py in ipairs({
-            "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3.12",
-            "/Library/Frameworks/Python.framework/Versions/3.11/bin/python3.11",
-            "/Library/Frameworks/Python.framework/Versions/3.10/bin/python3.10",
-        }) do
+        -- Each entry: { path, extra_flag_or_nil }
+        -- extra_flag is needed for Homebrew / system Pythons (PEP 668)
+        local candidates = {
+            { "/Library/Frameworks/Python.framework/Versions/3.13/bin/python3.13", nil },
+            { "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3.12", nil },
+            { "/Library/Frameworks/Python.framework/Versions/3.11/bin/python3.11", nil },
+            { "/Library/Frameworks/Python.framework/Versions/3.10/bin/python3.10", nil },
+            { "/opt/homebrew/bin/python3", "--break-system-packages" },
+            { "/usr/local/bin/python3",    "--break-system-packages" },
+            { "/usr/bin/python3",          "--break-system-packages" },
+        }
+        local first_found_py  = nil
+        local first_found_flag = nil
+        for _, entry in ipairs(candidates) do
+            local py, flag = entry[1], entry[2]
             local probe = io.open(py, "r")
             if probe then
                 probe:close()
-                if exec_ok('"' .. py .. '" -m pip install --quiet wavinfo') then
-                    return true, nil
+                if not first_found_py then
+                    first_found_py   = py
+                    first_found_flag = flag
                 end
-                return false, py .. " -m pip install wavinfo"
+                local install_cmd = '"' .. py .. '" -m pip install --quiet '
+                    .. (flag and (flag .. ' ') or '') .. 'wavinfo'
+                if exec_ok(install_cmd) then return true, nil end
             end
         end
-        -- Homebrew / system python3 with PEP-668 override
-        for _, cmd in ipairs({
-            "python3 -m pip install --quiet --break-system-packages wavinfo",
-            "python3 -m pip install --quiet --user wavinfo",
-        }) do
-            if exec_ok(cmd) then return true, nil end
+        -- Build the manual command for the first Python we found
+        if first_found_py then
+            local display = first_found_py .. ' -m pip install '
+                .. (first_found_flag and (first_found_flag .. ' ') or '') .. 'wavinfo'
+            return false, display
         end
         return false, "python3 -m pip install --break-system-packages wavinfo"
     end
