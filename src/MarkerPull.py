@@ -41,12 +41,18 @@ def get_active_project_and_timeline(resolve):
     return project, timeline, None
 
 
-def get_timeline_fps(project):
-    raw = project.GetSetting("timelineFrameRate")
-    try:
-        return float(raw)
-    except (TypeError, ValueError):
-        return 24.0
+def get_timeline_fps(project, timeline=None):
+    # timeline.GetSetting is more reliable than project.GetSetting for frame rate
+    for obj in [timeline, project]:
+        if not obj:
+            continue
+        try:
+            v = float(obj.GetSetting("timelineFrameRate"))
+            if v > 0:
+                return v
+        except (TypeError, ValueError):
+            pass
+    return 25.0
 
 
 # ---------------------------------------------------------------------------
@@ -159,15 +165,12 @@ def import_markers_for_file(file_entry, fps):
         # Add to MediaPoolItem (shows in media pool / source viewer)
         file_entry["media_pool_item"].AddMarker(frame, MARKER_COLOR, name, "", 1, "")
 
-        # Add to every TimelineItem that uses this WAV (shows directly on timeline clip).
-        # TimelineItem.AddMarker uses absolute timeline frame numbers.
-        # Formula: GetStart() + (source_frame - GetLeftOffset())
+        # Add to every TimelineItem — frame is source-relative, GetLeftOffset=0 in this case
         for ti in file_entry.get("timeline_items", []):
-            clip_offset = frame - ti.GetLeftOffset()
-            if clip_offset < 0 or clip_offset >= ti.GetDuration():
-                continue  # cue is outside the clip's in/out range
-            timeline_frame = ti.GetStart() + clip_offset
-            result = ti.AddMarker(timeline_frame, MARKER_COLOR, name, "", 1, "")
+            clip_frame = frame - ti.GetLeftOffset()
+            if clip_frame < 0 or clip_frame >= ti.GetDuration():
+                continue
+            result = ti.AddMarker(clip_frame, MARKER_COLOR, name, "", 1, "")
             if result is not False:
                 count += 1
 
@@ -273,7 +276,7 @@ def run_ui(resolve, project):
             wav_files = []
             tree.Clear()
             return
-        fps = get_timeline_fps(project)
+        fps = get_timeline_fps(project, current_timeline)
         wav_files = scan_timeline_wav_files(current_timeline)
         if not wav_files:
             set_status("Ingen WAV-filer funnet i aktiv tidslinje.")
