@@ -41,8 +41,23 @@ dlg.Hide()
 - Konstanter: `UPPER_SNAKE_CASE`
 - Ingen inline styles — bruk StyleSheet-strenger
 
+## Python-krav
+- Resolve krever Python installert fra **python.org** (Framework-install i `/Library/Frameworks/Python.framework/`)
+- Homebrew Python (`/opt/homebrew/bin/python3`) fungerer **ikke** — Resolve finner den ikke og viser ikke `.py`-scripts i Scripts-menyen
+- wavinfo må installeres til python.org-Pythonen: `/Library/Frameworks/Python.framework/Versions/3.x/bin/python3.x -m pip install wavinfo`
+
+## Installer-arkitektur (`scripts/build_setup.py` → `MarkerPull_Setup.lua`)
+- `build_setup.py` embedder `src/MarkerPull.py` som Lua long string og genererer `MarkerPull_Setup.lua`
+- Brukeren drar `MarkerPull_Setup.lua` inn på Fusion scripting console — ingen terminal nødvendig
+- Installereren bruker `fusion:MapPath("Scripts:Utility")` for å finne riktig installsti (ikke hardkodet)
+- Tre dialogtilstander: (1) Python Framework mangler, (2) wavinfo mangler, (3) alt OK
+- Ved manglende Python: knapper for å åpne python.org og kopiere curl-installkommando
+- Ved manglende wavinfo: knapp for å kopiere riktig pip-kommando for den Python-versjonen som ble funnet
+- Avinstaller-knapp alltid tilgjengelig når filen ble skrevet
+
 ## Ting Claude aldri skal gjøre
 - Legg ALDRI markører på timeline-objektet — kun på `MediaPoolItem`
 - Bruk ALDRI hardkodede filstier utenom install-stien dokumentert over
 - Anta ALDRI at Resolve API-kall lyktes uten å sjekke returverdi
 - Installer ALDRI wavinfo automatisk — vis heller en feilmelding i UI hvis det mangler
+- Anta ALDRI at Homebrew Python er tilstrekkelig — alltid sjekk for Framework-install
