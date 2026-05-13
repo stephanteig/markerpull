@@ -543,7 +543,7 @@ mkdir_p(install_dir)
 local sep  = is_windows and "\\" or "/"
 local dest = install_dir .. sep .. SCRIPT_NAME
 
-local ok, err_msg, wavinfo_ok, pip_cmd
+local ok, err_msg, python_found, wavinfo_ok, pip_cmd
 
 local fh, ferr = io.open(dest, "w")
 if not fh then
@@ -553,14 +553,42 @@ else
     fh:write(MARKERPULL_CONTENT)
     fh:close()
     ok = true
-    wavinfo_ok, pip_cmd = try_install_wavinfo()
+
+    -- Check for Python Framework install (required by Resolve — Homebrew Python not enough)
+    python_found = false
+    if is_windows then
+        python_found = exec_ok("py --version") or exec_ok("python3 --version") or exec_ok("python --version")
+    else
+        for _, py in ipairs({
+            "/Library/Frameworks/Python.framework/Versions/3.13/bin/python3.13",
+            "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3.12",
+            "/Library/Frameworks/Python.framework/Versions/3.11/bin/python3.11",
+            "/Library/Frameworks/Python.framework/Versions/3.10/bin/python3.10",
+        }) do
+            local probe = io.open(py, "r")
+            if probe then probe:close(); python_found = true; break end
+        end
+    end
+
+    if python_found then
+        wavinfo_ok, pip_cmd = try_install_wavinfo()
+    end
 end
 
 -- ---- Result dialog ----
 
+local py_install_cmd
+if is_windows then
+    py_install_cmd = "winget install Python.Python.3.13"
+else
+    py_install_cmd = "curl -Lo ~/Downloads/python3.pkg https://www.python.org/ftp/python/3.13.3/python-3.13.3-macos11.pkg && open ~/Downloads/python3.pkg"
+end
+
 local msg
 if not ok then
     msg = "Installasjon feilet:\n\n" .. err_msg
+elseif not python_found then
+    msg = "MarkerPull er kopiert, men Python mangler.\n\nDaVinci Resolve krever Python installert fra\npython.org — Homebrew Python fungerer ikke.\n\nInstaller Python 3.13 fra python.org og restart Resolve."
 elseif wavinfo_ok then
     msg = "MarkerPull er installert!\n\nStart DaVinci Resolve pa nytt og finn\nscriptet under:\nWorkspace -> Scripts -> Utility -> MarkerPull"
 else
@@ -574,8 +602,11 @@ local ui   = fusion_obj.UIManager
 local disp = bmd.UIDispatcher(ui)
 
 local btn_row = {}
-if ok and not wavinfo_ok then
-    table.insert(btn_row, ui:Button({ ID = "CopyBtn", Text = "Kopier kommando", Weight = 1 }))
+if ok and not python_found then
+    table.insert(btn_row, ui:Button({ ID = "OpenPyBtn",  Text = "Aapne python.org", Weight = 1 }))
+    table.insert(btn_row, ui:Button({ ID = "CopyPyBtn",  Text = "Kopier kommando",  Weight = 1 }))
+elseif ok and not wavinfo_ok then
+    table.insert(btn_row, ui:Button({ ID = "CopyBtn",    Text = "Kopier kommando",  Weight = 1 }))
 end
 if ok then
     table.insert(btn_row, ui:Button({ ID = "UninstallBtn", Text = "Avinstaller", Weight = 0 }))
@@ -583,7 +614,7 @@ end
 table.insert(btn_row, ui:Button({ ID = "OkBtn", Text = "OK", Weight = 0 }))
 
 local dlg = disp:AddWindow(
-    { WindowTitle = "MarkerPull Setup", ID = "SetupWin", Geometry = {200, 200, 520, 300} },
+    { WindowTitle = "MarkerPull Setup", ID = "SetupWin", Geometry = {200, 200, 560, 320} },
     {
         ui:VGroup({ Spacing = 10, Weight = 1 }, {
             ui:Label({ ID = "Msg", Text = msg, Weight = 1 }),
@@ -597,7 +628,25 @@ local itm = dlg:GetItems()
 function dlg.On.SetupWin.Close(ev) disp:ExitLoop() end
 function dlg.On.OkBtn.Clicked(ev)  disp:ExitLoop() end
 
-if ok and not wavinfo_ok then
+if ok and not python_found then
+    function dlg.On.OpenPyBtn.Clicked(ev)
+        if is_windows then
+            os.execute('start https://www.python.org/downloads/')
+        else
+            os.execute('open "https://www.python.org/downloads/"')
+        end
+    end
+    function dlg.On.CopyPyBtn.Clicked(ev)
+        if is_windows then
+            os.execute('echo ' .. py_install_cmd .. ' | clip')
+        else
+            os.execute("echo '" .. py_install_cmd .. "' | pbcopy")
+        end
+        itm["CopyPyBtn"].Text = "Kopiert!"
+    end
+end
+
+if ok and not wavinfo_ok and pip_cmd then
     function dlg.On.CopyBtn.Clicked(ev)
         if is_windows then
             os.execute('echo ' .. pip_cmd .. ' | clip')
